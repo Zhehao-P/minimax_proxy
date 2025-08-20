@@ -1,0 +1,11 @@
+name = "tts-api-proxy"
+main = "src/worker.ts"
+compatibility_date = "2024-01-01"
+
+# 启用日志
+[observability]
+enabled = true
+
+[vars]
+CORS_ORIGIN = "https://your-frontend-domain.com"
+THIRD_PARTY_TTS_URL = "https://api.minimax.chat/v1/t2a_v2"
