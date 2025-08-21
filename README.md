@@ -78,7 +78,7 @@ THIRD_PARTY_TTS_URL = "https://api.minimax.chat/v1/t2a_v2"
 npx wrangler secret put THIRD_PARTY_TTS_KEY
 # 提示时输入你的真实 MiniMax API Key
 
-# 设置 MiniMax Group ID  
+# 设置 MiniMax Group ID
 npx wrangler secret put THIRD_PARTY_GROUP_ID
 # 提示时输入你的真实 Group ID
 
@@ -219,5 +219,5 @@ npm run dev
 npm run deploy
 
 # 运行测试
-./test.sh [worker_url] [proxy_token]
+./test.sh [worker_url]
 ```

@@ -214,10 +214,3 @@ fi
 echo ""
 echo "生成的文件:"
 ls -la test_*.mp3 2>/dev/null || echo "未生成任何文件"
-
-echo ""
-echo "💡 提示:"
-echo "- 如果状态码是 401，请检查 PROXY_TOKEN 是否正确"
-echo "- 如果状态码是 502，请检查第三方服务配置"
-echo "- 如果返回JSON错误，请检查MiniMax API配置和余额"
-echo "- 音频文件可以直接用播放器播放验证效果"

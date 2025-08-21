@@ -35,16 +35,27 @@ function handleCORS(request: Request, env: Env): Response | null {
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 200,
-      headers: {
-        'Access-Control-Allow-Origin': env.CORS_ORIGIN,
+      headers: createSafeHeaders(env, {
+        'Content-Type': 'text/plain',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, X-Proxy-Token',
         'Access-Control-Max-Age': '86400',
-      },
+      }),
     });
   }
 
   return null;
+}
+
+function createUnsafeHeaders(additionalHeaders: Record<string, string> = {}): Record<string, string> {
+  return { ...additionalHeaders };
+}
+
+function createSafeHeaders(env: Env, additionalHeaders: Record<string, string> = {}): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': env.CORS_ORIGIN,
+    ...additionalHeaders
+  };
 }
 
 function checkAuth(request: Request, env: Env): Response | null {
@@ -53,10 +64,7 @@ function checkAuth(request: Request, env: Env): Response | null {
   if (!token || token !== env.PROXY_TOKEN) {
     return new Response('Unauthorized', {
       status: 401,
-      headers: {
-        'Access-Control-Allow-Origin': env.CORS_ORIGIN,
-        'Content-Type': 'text/plain',
-      }
+      headers: createUnsafeHeaders({ 'Content-Type': 'text/plain' })
     });
   }
 
@@ -65,6 +73,7 @@ function checkAuth(request: Request, env: Env): Response | null {
 
 async function handleTTSService(request: Request, env: Env): Promise<Response> {
   const startTime = Date.now();
+  const validOrigin = request.headers.get('Origin')!;
 
   try {
     if (request.method !== 'POST') {
@@ -72,10 +81,7 @@ async function handleTTSService(request: Request, env: Env): Promise<Response> {
       logRequest(request.method, '/api/tts', 405, duration);
       return new Response('Method not allowed', {
         status: 405,
-        headers: {
-          'Access-Control-Allow-Origin': env.CORS_ORIGIN,
-          'Content-Type': 'text/plain',
-        }
+        headers: createSafeHeaders(env, { 'Content-Type': 'text/plain' })
       });
     }
 
@@ -118,93 +124,130 @@ async function handleTTSService(request: Request, env: Env): Promise<Response> {
       logRequest(request.method, '/api/tts', response.status, Date.now() - startTime, errorText);
       return new Response('TTS service error', {
         status: 502,
-        headers: {
-          'Access-Control-Allow-Origin': env.CORS_ORIGIN,
-          'Content-Type': 'text/plain',
-        }
+        headers: createSafeHeaders(env, { 'Content-Type': 'text/plain' })
       });
     }
 
     const contentType = response.headers.get('Content-Type');
 
     if (contentType && contentType.startsWith('audio/')) {
-      const audioBuffer = await response.arrayBuffer();
+      // 修复：直接流式转发，不等待完整下载
       const duration = Date.now() - startTime;
       logRequest(request.method, '/api/tts', 200, duration);
 
-      return new Response(audioBuffer, {
+      return new Response(response.body, {
         status: 200,
-        headers: {
-          'Access-Control-Allow-Origin': env.CORS_ORIGIN,
+        headers: createSafeHeaders(env, {
           'Content-Type': contentType,
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-        },
+          'Cache-Control': 'no-cache, no-store, must-revalidate'
+        })
       });
     } else if (contentType && contentType.includes('application/json')) {
       try {
-        const jsonResponse = await response.json();
+        // 先克隆响应以避免流被消费
+        const responseClone = response.clone();
+        const jsonResponse = await responseClone.json();
 
+        // 检查MiniMax业务层错误
+        if (jsonResponse.base_resp && jsonResponse.base_resp.status_code !== 0) {
+          const duration = Date.now() - startTime;
+          logRequest(request.method, '/api/tts', 502, duration, 'Third-party service error');
+          return new Response('TTS service error', {
+            status: 502,
+            headers: createSafeHeaders(env, { 'Content-Type': 'text/plain' })
+          });
+        }
+
+        // 处理不同的音频数据格式
         if (jsonResponse.audio_url || jsonResponse.file_url || jsonResponse.download_url) {
+          // 直接音频URL的情况
           const contentUrl = jsonResponse.audio_url || jsonResponse.file_url || jsonResponse.download_url;
           const contentResponse = await fetch(contentUrl);
 
           if (!contentResponse.ok) {
-            throw new Error('Failed to fetch audio content');
+            const duration = Date.now() - startTime;
+            logRequest(request.method, '/api/tts', 502, duration, 'Failed to fetch audio content');
+            return new Response('TTS service error', {
+              status: 502,
+              headers: createSafeHeaders(env, { 'Content-Type': 'text/plain' })
+            });
           }
 
-          const contentBuffer = await contentResponse.arrayBuffer();
           const audioContentType = contentResponse.headers.get('Content-Type') || 'audio/mpeg';
           const duration = Date.now() - startTime;
           logRequest(request.method, '/api/tts', 200, duration);
 
-          return new Response(contentBuffer, {
+          return new Response(contentResponse.body, {
             status: 200,
-            headers: {
-              'Access-Control-Allow-Origin': env.CORS_ORIGIN,
+            headers: createSafeHeaders(env, {
               'Content-Type': audioContentType,
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-            },
+              'Cache-Control': 'no-cache, no-store, must-revalidate'
+            })
           });
+        } else if (jsonResponse.data && jsonResponse.data.audio) {
+          // MiniMax格式：data.audio包含十六进制编码的音频数据，解码后流式回传
+          try {
+            const hexAudio = jsonResponse.data.audio;
+            // 将hex字符串转换为字节数组
+            const audioBytes = new Uint8Array(hexAudio.length / 2);
+            for (let i = 0; i < hexAudio.length; i += 2) {
+              audioBytes[i / 2] = parseInt(hexAudio.substr(i, 2), 16);
+            }
+            
+            const duration = Date.now() - startTime;
+            logRequest(request.method, '/api/tts', 200, duration);
+
+            // 直接流式回传音频二进制数据
+            return new Response(audioBytes, {
+              status: 200,
+              headers: createSafeHeaders(env, {
+                'Content-Type': 'audio/mpeg',
+                'Cache-Control': 'no-cache, no-store, must-revalidate'
+              })
+            });
+          } catch (hexError) {
+            const duration = Date.now() - startTime;
+            logRequest(request.method, '/api/tts', 502, duration, 'Failed to decode hex audio data');
+            return new Response('TTS service error', {
+              status: 502,
+              headers: createSafeHeaders(env, { 'Content-Type': 'text/plain' })
+            });
+          }
         }
 
+        // 如果是其他JSON响应但没有业务错误，记录响应内容用于调试
         const duration = Date.now() - startTime;
-        logRequest(request.method, '/api/tts', 200, duration);
-
-        return new Response(JSON.stringify(jsonResponse), {
-          status: 200,
-          headers: {
-            'Access-Control-Allow-Origin': env.CORS_ORIGIN,
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache',
-          },
+        const debugInfo = `JSON response without audio URL. Keys: ${Object.keys(jsonResponse).join(', ')}`;
+        logRequest(request.method, '/api/tts', 502, duration, debugInfo);
+        return new Response('TTS service error', {
+          status: 502,
+          headers: createSafeHeaders(env, { 'Content-Type': 'text/plain' })
         });
 
       } catch (jsonError) {
-        const responseData = await response.arrayBuffer();
+        // JSON解析失败，尝试作为二进制内容流式返回
         const duration = Date.now() - startTime;
         logRequest(request.method, '/api/tts', 200, duration);
 
-        return new Response(responseData, {
+        return new Response(response.body, {
           status: 200,
-          headers: {
-            'Access-Control-Allow-Origin': env.CORS_ORIGIN,
+          headers: createSafeHeaders(env, {
             'Content-Type': contentType || 'application/octet-stream',
-            'Cache-Control': 'no-cache',
-          },
+            'Cache-Control': 'no-cache'
+          })
         });
       }
     } else {
-      const responseData = await response.arrayBuffer();
+      // 修复：对于其他类型也使用流式传输
       const duration = Date.now() - startTime;
       logRequest(request.method, '/api/tts', 200, duration);
 
-      return new Response(responseData, {
+      return new Response(response.body, {
         status: 200,
-        headers: {
-          'Access-Control-Allow-Origin': env.CORS_ORIGIN,
+        headers: createSafeHeaders(env, {
           'Content-Type': contentType || 'application/octet-stream',
-          'Cache-Control': 'no-cache',
-        },
+          'Cache-Control': 'no-cache'
+        })
       });
     }
 
@@ -215,10 +258,7 @@ async function handleTTSService(request: Request, env: Env): Promise<Response> {
 
     return new Response('TTS service error', {
       status: 500,
-      headers: {
-        'Access-Control-Allow-Origin': env.CORS_ORIGIN,
-        'Content-Type': 'text/plain',
-      }
+      headers: createSafeHeaders(env, { 'Content-Type': 'text/plain' })
     });
   }
 }
@@ -243,7 +283,7 @@ export default {
       }
 
       const url = new URL(request.url);
-      
+
       if (url.pathname === '/api/tts') {
         return await handleTTSService(request, env);
       }
@@ -253,22 +293,16 @@ export default {
 
       return new Response('Not Found', {
         status: 404,
-        headers: {
-          'Access-Control-Allow-Origin': env.CORS_ORIGIN,
-          'Content-Type': 'text/plain',
-        }
+        headers: createSafeHeaders(env, { 'Content-Type': 'text/plain' })
       });
 
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logRequest(request.method, request.url, 500, duration, errorMessage);
-
       return new Response('Internal server error', {
         status: 500,
-        headers: {
-          'Content-Type': 'text/plain',
-        }
+        headers: createSafeHeaders(env, { 'Content-Type': 'text/plain' })
       });
     }
   },
