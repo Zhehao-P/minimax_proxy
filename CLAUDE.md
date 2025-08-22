@@ -64,7 +64,7 @@ Configuration is split between `wrangler.toml` (public vars) and **Wrangler Secr
 **Secret Variables** (Wrangler Secrets - use `npx wrangler secret put <NAME>`):
 - **`THIRD_PARTY_GROUP_ID`**: Third-party GroupId (injected as query parameter)
 - **`THIRD_PARTY_TTS_KEY`**: Third-party API key (used as `Authorization: Bearer <key>`)
-- **`PROXY_TOKEN`**: Our lightweight access token (frontend sends as `X-Proxy-Token` header)
+- **`PROXY_TOKENS`**: JSON array of valid access tokens (e.g., `["token1","token2","token3"]`) - frontend sends one as `X-Proxy-Token` header
 
 **Current Deployment**: `https://tts-api-proxy.zpengpzh.workers.dev`
 

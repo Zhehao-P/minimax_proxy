@@ -2,7 +2,7 @@ interface Env {
   THIRD_PARTY_TTS_URL: string;
   THIRD_PARTY_GROUP_ID: string;
   THIRD_PARTY_TTS_KEY: string;
-  PROXY_TOKEN: string;
+  PROXY_TOKENS: string;
   CORS_ORIGIN: string;
 }
 
@@ -61,7 +61,24 @@ function createSafeHeaders(env: Env, additionalHeaders: Record<string, string> =
 function checkAuth(request: Request, env: Env): Response | null {
   const token = request.headers.get('X-Proxy-Token');
 
-  if (!token || token !== env.PROXY_TOKEN) {
+  if (!token) {
+    return new Response('Unauthorized', {
+      status: 401,
+      headers: createUnsafeHeaders({ 'Content-Type': 'text/plain' })
+    });
+  }
+
+  try {
+    const validTokens: string[] = JSON.parse(env.PROXY_TOKENS);
+    if (!Array.isArray(validTokens) || !validTokens.includes(token)) {
+      return new Response('Unauthorized', {
+        status: 401,
+        headers: createUnsafeHeaders({ 'Content-Type': 'text/plain' })
+      });
+    }
+  } catch (error) {
+    // JSON解析失败，记录错误但不暴露给客户端
+    console.error('Failed to parse PROXY_TOKENS:', error);
     return new Response('Unauthorized', {
       status: 401,
       headers: createUnsafeHeaders({ 'Content-Type': 'text/plain' })
@@ -73,7 +90,6 @@ function checkAuth(request: Request, env: Env): Response | null {
 
 async function handleTTSService(request: Request, env: Env): Promise<Response> {
   const startTime = Date.now();
-  const validOrigin = request.headers.get('Origin')!;
 
   try {
     if (request.method !== 'POST') {
@@ -193,7 +209,7 @@ async function handleTTSService(request: Request, env: Env): Promise<Response> {
             for (let i = 0; i < hexAudio.length; i += 2) {
               audioBytes[i / 2] = parseInt(hexAudio.substr(i, 2), 16);
             }
-            
+
             const duration = Date.now() - startTime;
             logRequest(request.method, '/api/tts', 200, duration);
 

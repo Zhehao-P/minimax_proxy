@@ -40,87 +40,62 @@ X-Proxy-Token: your_access_token
 - 成功：返回音频文件流（Content-Type: audio/*）
 - 失败：返回错误信息（JSON格式）
 
-## 部署步骤
+## 快速开始
 
 ### 1. 准备环境
 
 ```bash
 # 克隆项目
 git clone <repository_url>
-cd api_forward
+cd minimax_proxy
 
 # 安装依赖
 npm install
 ```
 
-### 2. 配置环境变量
-
-项目使用 Wrangler Secrets 来安全管理敏感信息。`wrangler.toml` 只包含非敏感配置：
-
-```toml
-name = "tts-api-proxy"
-main = "src/worker.ts"
-compatibility_date = "2024-01-01"
-
-# 启用日志
-[observability]
-enabled = true
-
-[vars]
-CORS_ORIGIN = "https://your-frontend-domain.com"
-THIRD_PARTY_TTS_URL = "https://api.minimax.chat/v1/t2a_v2"
-```
-
-**设置敏感变量为 Secrets：**
-
-```bash
-# 设置 MiniMax API 密钥
-npx wrangler secret put THIRD_PARTY_TTS_KEY
-# 提示时输入你的真实 MiniMax API Key
-
-# 设置 MiniMax Group ID
-npx wrangler secret put THIRD_PARTY_GROUP_ID
-# 提示时输入你的真实 Group ID
-
-# 设置访问令牌（运行 test.sh 必须设为：default_proxy_token）
-npx wrangler secret put PROXY_TOKEN
-# 提示时输入：default_proxy_token （如果要使用测试脚本的话）
-```
-
-**常用 Secrets 管理命令：**
-
-```bash
-# 查看所有 secrets
-npx wrangler secret list
-
-# 修改 secret 值（重新设置同名 secret）
-npx wrangler secret put PROXY_TOKEN
-
-# 删除 secret
-npx wrangler secret delete PROXY_TOKEN
-```
-
-### 3. 登录 Cloudflare
+### 2. 登录 Cloudflare 账号
 
 ```bash
 npx wrangler login
 ```
 
-### 4. 部署到 Cloudflare Workers
+按提示在浏览器中登录您的 Cloudflare 账号。
+
+### 3. 一键启动服务
+
+运行交互式配置脚本，它会引导您完成所有配置并自动部署：
 
 ```bash
-npm run deploy
+./setup.sh
 ```
 
-部署完成后会显示访问地址，例如：
-```
-https://tts-api-proxy.your-subdomain.workers.dev
-```
+脚本会依次询问：
+- 需要多少个用户令牌？
+- 前端域名（CORS设置）
+- TTS服务URL（默认MiniMax）
+- Group ID
+- API密钥
 
-### 5. 测试部署
+配置完成后会自动：
+- 生成指定数量的访问令牌
+- 设置所有环境变量
+- 部署到 Cloudflare Workers
+- 显示服务地址和令牌列表
+
+### 4. 停止服务
+
+需要停止服务时，运行：
 
 ```bash
-./test.sh https://your-worker-url.workers.dev your_proxy_token
+./stop.sh
+```
+
+### 5. 测试服务
+
+使用生成的令牌测试服务：
+
+```bash
+./test.sh https://your-worker-url.workers.dev your_generated_token
 ```
 
 ## 实现原理
@@ -140,39 +115,92 @@ https://tts-api-proxy.your-subdomain.workers.dev
    - JSON含音频URL：服务端获取音频后流式返回
 4. **安全防护**：Token 认证 + CORS 限制 + 错误信息过滤
 
-### 请求映射
+## 参数映射逻辑
 
-前端请求 → MiniMax API 请求：
+我们的API接口参数到MiniMax API的详细映射关系：
 
-```typescript
-// 前端发送
+### 输入参数映射表
+
+| 我们的参数 | MiniMax目标字段 | 说明 | 默认值 |
+|-----------|----------------|------|--------|
+| `text` | `text` | 需要合成的文本内容 | 必填 |
+| `voice` | `timber_weights[0].voice_id` + `voice_setting.voice_id` | 语音ID，映射到两个位置 | `"Boyan_new_platform"` |
+| `speed` | `voice_setting.speed` | 语音速度 | `1` |
+| `pitch` | `voice_setting.pitch` | 音调 | `0` |
+| `vol` | `voice_setting.vol` | 音量 | `1` |
+| `sample_rate` | `audio_setting.sample_rate` | 采样率 | `32000` |
+| `format` | `audio_setting.format` | 音频格式 | `"mp3"` |
+| `language` | `language_boost` | 语言增强 | `"auto"` |
+
+### 固定映射参数
+
+以下参数由代理服务自动设置：
+
+| MiniMax参数 | 固定值 | 说明 |
+|------------|--------|------|
+| `model` | `"speech-2.5-hd-preview"` | TTS模型版本 |
+| `timber_weights[0].weight` | `100` | 语音权重 |
+| `voice_setting.latex_read` | `false` | 不读取LaTeX |
+| `audio_setting.bitrate` | `128000` | 音频比特率 |
+
+### 完整映射示例
+
+**前端请求**:
+```json
 {
-  "text": "hello",
-  "voice": "Boyan_new_platform",
-  "format": "mp3"
-}
-
-// 转换为 MiniMax 格式
-{
-  "model": "speech-2.5-hd-preview",
-  "text": "hello",
-  "timber_weights": [{"voice_id": "Boyan_new_platform", "weight": 100}],
-  "voice_setting": {...},
-  "audio_setting": {...}
+  "text": "你好世界",
+  "voice": "Boyan_new_platform", 
+  "speed": 1.2,
+  "pitch": 0.1,
+  "vol": 0.8,
+  "sample_rate": 24000,
+  "format": "wav",
+  "language": "zh"
 }
 ```
 
-## 环境变量说明
+**转换为MiniMax格式**:
+```json
+{
+  "model": "speech-2.5-hd-preview",
+  "text": "你好世界",
+  "timber_weights": [
+    {
+      "voice_id": "Boyan_new_platform",
+      "weight": 100
+    }
+  ],
+  "voice_setting": {
+    "voice_id": "Boyan_new_platform",
+    "speed": 1.2,
+    "pitch": 0.1,
+    "vol": 0.8,
+    "latex_read": false
+  },
+  "audio_setting": {
+    "sample_rate": 24000,
+    "bitrate": 128000,
+    "format": "wav"
+  },
+  "language_boost": "zh"
+}
+```
 
-| 变量名 | 说明 | 示例 |
-|--------|------|------|
-| `PROXY_TOKEN` | 前端访问令牌 | `my_secret_token` |
-| `CORS_ORIGIN` | 允许的前端域名 | `https://app.example.com` |
-| `THIRD_PARTY_TTS_URL` | MiniMax TTS API 地址 | `https://api.minimax.chat/v1/t2a_v2` |
-| `THIRD_PARTY_GROUP_ID` | MiniMax GroupId | `your_group_id` |
-| `THIRD_PARTY_TTS_KEY` | MiniMax API 密钥 | `eyJhbGciOi...` |
+## 配置文件说明
+
+`setup.sh` 脚本会自动更新 `wrangler.toml` 中的公共变量：
+
+```toml
+[vars]
+CORS_ORIGIN = "https://your-frontend-domain.com"
+THIRD_PARTY_TTS_URL = "https://api.minimax.chat/v1/t2a_v2"
+```
+
+这两个变量可以在部署后直接查看，其他敏感信息（如API密钥和访问令牌）使用 Wrangler Secrets 安全存储。
 
 ## 使用示例
+
+### JavaScript/前端调用
 
 ```javascript
 // 前端调用示例
@@ -196,6 +224,30 @@ const audioUrl = URL.createObjectURL(audioBlob);
 // 播放音频
 const audio = new Audio(audioUrl);
 audio.play();
+```
+
+### curl 命令行调用
+
+```bash
+# 基础TTS调用，保存为音频文件
+curl -X POST https://your-worker.workers.dev/api/tts \
+  -H "Content-Type: application/json" \
+  -H "Origin: https://your-frontend-domain.com" \
+  -H "X-Proxy-Token: your_access_token" \
+  -d '{
+    "text": "你好，这是一个测试",
+    "voice": "Boyan_new_platform",
+    "format": "mp3",
+    "sample_rate": 32000,
+    "speed": 1,
+    "pitch": 0,
+    "vol": 1,
+    "language": "auto"
+  }' \
+  --output audio.mp3
+
+# 使用测试脚本（如果启用了测试模式）
+./test.sh https://your-worker.workers.dev default_proxy_token
 ```
 
 ## 项目结构
