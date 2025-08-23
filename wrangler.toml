@@ -1,4 +1,4 @@
-name = "tts-api-proxy"
+name = "api-proxy"
 main = "src/worker.ts"
 compatibility_date = "2024-01-01"
 
@@ -9,3 +9,29 @@ enabled = true
 [vars]
 CORS_ORIGIN = "https://your-frontend-domain.com"
 THIRD_PARTY_TTS_URL = "https://api.minimax.chat/v1/t2a_v2"
+TTS_PARAMETER_MAPPING = """{
+  "template": {
+    "model": "speech-2.5-hd-preview",
+    "text": "{{text}}",
+    "timber_weights": [
+      {
+        "voice_id": "{{voice:Boyan_new_platform}}",
+        "weight": 100
+      }
+    ],
+    "voice_setting": {
+      "voice_id": "{{voice:Boyan_new_platform}}",
+      "speed": "{{speed:1}}",
+      "pitch": "{{pitch:0}}",
+      "vol": "{{vol:1}}",
+      "latex_read": false
+    },
+    "audio_setting": {
+      "sample_rate": "{{sample_rate:32000}}",
+      "bitrate": 128000,
+      "format": "{{format:mp3}}"
+    },
+    "language_boost": "{{language:auto}}"
+  },
+  "number_fields": ["voice_setting.speed", "voice_setting.pitch", "voice_setting.vol", "audio_setting.sample_rate"]
+}"""

@@ -60,6 +60,7 @@ Configuration is split between `wrangler.toml` (public vars) and **Wrangler Secr
 **Public Variables** (`wrangler.toml`):
 - **`CORS_ORIGIN`**: Allowed frontend domain (e.g., `https://your-frontend-domain.com`)
 - **`THIRD_PARTY_TTS_URL`**: Third-party TTS base URL (`https://api.minimax.chat/v1/t2a_v2`)
+- **`TTS_PARAMETER_MAPPING`**: JSON template for parameter mapping (see Parameter Mapping section)
 
 **Secret Variables** (Wrangler Secrets - use `npx wrangler secret put <NAME>`):
 - **`THIRD_PARTY_GROUP_ID`**: Third-party GroupId (injected as query parameter)
@@ -107,6 +108,64 @@ const requestBody = {
 ```
 
 **Response**: `Content-Type: audio/*` - Direct audio stream for browser/`<audio>` playback
+
+## Parameter Mapping Configuration
+
+The TTS service uses a configurable JSON template system for parameter mapping. This allows easy modification of how our API parameters map to third-party service parameters.
+
+### Template Format
+
+The `TTS_PARAMETER_MAPPING` environment variable contains a JSON template with placeholder variables:
+
+- **`{{parameter_name}}`**: Direct parameter substitution
+- **`{{parameter_name:default_value}}`**: Parameter with default value if not provided
+
+### Example Configuration
+
+```json
+{
+  "model": "speech-2.5-hd-preview",
+  "text": "{{text}}",
+  "timber_weights": [
+    {
+      "voice_id": "{{voice:Boyan_new_platform}}",
+      "weight": 100
+    }
+  ],
+  "voice_setting": {
+    "voice_id": "{{voice:Boyan_new_platform}}",
+    "speed": "{{speed:1}}",
+    "pitch": "{{pitch:0}}",
+    "vol": "{{vol:1}}",
+    "latex_read": false
+  },
+  "audio_setting": {
+    "sample_rate": "{{sample_rate:32000}}",
+    "bitrate": 128000,
+    "format": "{{format:mp3}}"
+  },
+  "language_boost": "{{language:auto}}"
+}
+```
+
+### Updating Parameter Mapping
+
+1. Edit `TTS_PARAMETER_MAPPING` in `wrangler.toml`
+2. Use `{{parameter_name}}` for required parameters
+3. Use `{{parameter_name:default}}` for optional parameters with defaults
+4. Deploy changes with `npm run deploy`
+
+### Available Input Parameters
+
+Based on the `TTSRequest` interface:
+- `text` (required): Text to synthesize
+- `voice`: Voice model ID
+- `format`: Audio format (mp3, wav, etc.)
+- `sample_rate`: Audio sample rate
+- `speed`: Speech speed multiplier
+- `pitch`: Pitch adjustment
+- `vol`: Volume level
+- `language`: Language detection/boost setting
 
 ## API Design Patterns
 

@@ -1,12 +1,18 @@
 #!/bin/bash
 
 # TTS API 代理转发器测试脚本
-# 使用方法: ./test.sh [worker_url]
+# 使用方法: ./test.sh <worker_url> <proxy_token>
 
-DEFAULT_WORKER_URL="https://tts-api-proxy.your-subdomain.workers.dev"
-WORKER_URL=${1:-$DEFAULT_WORKER_URL}
+# 检查参数
+if [ $# -lt 2 ]; then
+    echo "❌ 错误: 缺少必要参数"
+    echo "使用方法: ./test.sh <worker_url> <proxy_token>"
+    echo "示例: ./test.sh https://api-proxy.example.workers.dev your_token_here"
+    exit 1
+fi
 
-PROXY_TOKEN="default_proxy_token"
+WORKER_URL="$1"
+PROXY_TOKEN="$2"
 CORS_ORIGIN="https://your-frontend-domain.com"
 
 echo "🚀 TTS API 代理转发器测试脚本"

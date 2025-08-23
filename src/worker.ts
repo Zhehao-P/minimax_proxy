@@ -1,9 +1,21 @@
+interface TTSRequest {
+  text: string;
+  voice?: string;
+  format?: string;
+  sample_rate?: number;
+  speed?: number;
+  pitch?: number;
+  vol?: number;
+  language?: string;
+}
+
 interface Env {
   THIRD_PARTY_TTS_URL: string;
   THIRD_PARTY_GROUP_ID: string;
   THIRD_PARTY_TTS_KEY: string;
   PROXY_TOKENS: string;
   CORS_ORIGIN: string;
+  TTS_PARAMETER_MAPPING: string;
 }
 
 function logRequest(method: string, url: string, status: number, duration: number, error?: string): void {
@@ -88,6 +100,41 @@ function checkAuth(request: Request, env: Env): Response | null {
   return null;
 }
 
+function buildRequestBody(input: TTSRequest, env: Env): any {
+  const config = JSON.parse(env.TTS_PARAMETER_MAPPING);
+  const template = config.template;
+  const numberFields = config.number_fields || [];
+  
+  function replaceValue(obj: any, path = ''): any {
+    if (typeof obj === 'string') {
+      const replaced = obj.replace(/\{\{(\w+)(:([^}]+))?\}\}/g, (match, key, __, defaultValue) => {
+        const value = (input as any)[key];
+        return value !== undefined ? value : (defaultValue || match);
+      });
+      
+      // 检查当前路径是否需要转换为数字
+      if (numberFields.includes(path) && !isNaN(Number(replaced))) {
+        return Number(replaced);
+      }
+      return replaced;
+    }
+    if (Array.isArray(obj)) {
+      return obj.map((item, index) => replaceValue(item, `${path}[${index}]`));
+    }
+    if (obj && typeof obj === 'object') {
+      const result: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        const newPath = path ? `${path}.${key}` : key;
+        result[key] = replaceValue(value, newPath);
+      }
+      return result;
+    }
+    return obj;
+  }
+  
+  return replaceValue(template);
+}
+
 async function handleTTSService(request: Request, env: Env): Promise<Response> {
   const startTime = Date.now();
 
@@ -101,26 +148,8 @@ async function handleTTSService(request: Request, env: Env): Promise<Response> {
       });
     }
 
-    const body = await request.json();
-
-    const requestBody = {
-      model: 'speech-2.5-hd-preview',
-      text: body.text,
-      timber_weights: [{ voice_id: body.voice || 'Boyan_new_platform', weight: 100 }],
-      voice_setting: {
-        voice_id: body.voice || 'Boyan_new_platform',
-        speed: body.speed ?? 1,
-        pitch: body.pitch ?? 0,
-        vol: body.vol ?? 1,
-        latex_read: false
-      },
-      audio_setting: {
-        sample_rate: body.sample_rate ?? 32000,
-        bitrate: 128000,
-        format: body.format ?? 'mp3'
-      },
-      language_boost: body.language ?? 'auto'
-    };
+    const body: TTSRequest = await request.json();
+    const requestBody = buildRequestBody(body, env);
 
     const url = new URL(env.THIRD_PARTY_TTS_URL);
     url.searchParams.set('GroupId', env.THIRD_PARTY_GROUP_ID);

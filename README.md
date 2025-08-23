@@ -95,6 +95,11 @@ npx wrangler login
 使用生成的令牌测试服务：
 
 ```bash
+./test.sh <worker_url> <proxy_token>
+```
+
+示例：
+```bash
 ./test.sh https://your-worker-url.workers.dev your_generated_token
 ```
 
@@ -115,35 +120,81 @@ npx wrangler login
    - JSON含音频URL：服务端获取音频后流式返回
 4. **安全防护**：Token 认证 + CORS 限制 + 错误信息过滤
 
-## 参数映射逻辑
+## 参数映射配置
 
-我们的API接口参数到MiniMax API的详细映射关系：
+TTS 服务使用可配置的 JSON 模板系统进行参数映射。这样可以轻松修改我们的 API 参数如何映射到第三方服务参数。
 
-### 输入参数映射表
+### 模板格式
 
-| 我们的参数 | MiniMax目标字段 | 说明 | 默认值 |
-|-----------|----------------|------|--------|
-| `text` | `text` | 需要合成的文本内容 | 必填 |
-| `voice` | `timber_weights[0].voice_id` + `voice_setting.voice_id` | 语音ID，映射到两个位置 | `"Boyan_new_platform"` |
-| `speed` | `voice_setting.speed` | 语音速度 | `1` |
-| `pitch` | `voice_setting.pitch` | 音调 | `0` |
-| `vol` | `voice_setting.vol` | 音量 | `1` |
-| `sample_rate` | `audio_setting.sample_rate` | 采样率 | `32000` |
-| `format` | `audio_setting.format` | 音频格式 | `"mp3"` |
-| `language` | `language_boost` | 语言增强 | `"auto"` |
+`TTS_PARAMETER_MAPPING` 环境变量包含带有占位符变量的 JSON 模板：
 
-### 固定映射参数
+- **`{{参数名}}`**：直接参数替换
+- **`{{参数名:默认值}}`**：带默认值的参数（如果未提供则使用默认值）
 
-以下参数由代理服务自动设置：
+### 配置示例
 
-| MiniMax参数 | 固定值 | 说明 |
-|------------|--------|------|
-| `model` | `"speech-2.5-hd-preview"` | TTS模型版本 |
-| `timber_weights[0].weight` | `100` | 语音权重 |
-| `voice_setting.latex_read` | `false` | 不读取LaTeX |
-| `audio_setting.bitrate` | `128000` | 音频比特率 |
+在 `wrangler.toml` 中的 `TTS_PARAMETER_MAPPING` 配置：
 
-### 完整映射示例
+```json
+{
+  "template": {
+    "model": "speech-2.5-hd-preview",
+    "text": "{{text}}",
+    "timber_weights": [
+      {
+        "voice_id": "{{voice:Boyan_new_platform}}",
+        "weight": 100
+      }
+    ],
+    "voice_setting": {
+      "voice_id": "{{voice:Boyan_new_platform}}",
+      "speed": "{{speed:1}}",
+      "pitch": "{{pitch:0}}",
+      "vol": "{{vol:1}}",
+      "latex_read": false
+    },
+    "audio_setting": {
+      "sample_rate": "{{sample_rate:32000}}",
+      "bitrate": 128000,
+      "format": "{{format:mp3}}"
+    },
+    "language_boost": "{{language:auto}}"
+  },
+  "number_fields": ["voice_setting.speed", "voice_setting.pitch", "voice_setting.vol", "audio_setting.sample_rate"]
+}
+```
+
+### 可用的输入参数
+
+基于 `TTSRequest` 接口定义：
+
+| 参数 | 类型 | 必需 | 说明 | 示例 |
+|------|------|------|------|------|
+| `text` | string | ✅ | 需要合成的文本 | "你好世界" |
+| `voice` | string | ❌ | 语音模型ID | "Boyan_new_platform" |
+| `format` | string | ❌ | 音频格式 | "mp3", "wav" |
+| `sample_rate` | number | ❌ | 采样率 | 32000, 24000 |
+| `speed` | number | ❌ | 语音速度倍数 | 1, 1.2, 0.8 |
+| `pitch` | number | ❌ | 音调调整 | 0, 0.1, -0.1 |
+| `vol` | number | ❌ | 音量级别 | 1, 0.8, 1.2 |
+| `language` | string | ❌ | 语言检测/增强 | "auto", "zh", "en" |
+
+### 更新参数映射
+
+1. 编辑 `wrangler.toml` 中的 `TTS_PARAMETER_MAPPING`
+2. 在 `template` 部分配置参数映射：
+   - 对必需参数使用 `{{参数名}}`
+   - 对可选参数使用 `{{参数名:默认值}}`
+3. 在 `number_fields` 数组中指定需要转换为数字类型的字段路径
+4. 使用 `npm run deploy` 部署更改
+
+### 数字类型转换
+
+使用点号路径来指定需要转换为数字的字段：
+- `"voice_setting.speed"` - voice_setting对象中的speed字段
+- `"audio_setting.sample_rate"` - audio_setting对象中的sample_rate字段
+
+### 映射示例
 
 **前端请求**:
 ```json
@@ -151,15 +202,11 @@ npx wrangler login
   "text": "你好世界",
   "voice": "Boyan_new_platform", 
   "speed": 1.2,
-  "pitch": 0.1,
-  "vol": 0.8,
-  "sample_rate": 24000,
-  "format": "wav",
-  "language": "zh"
+  "format": "wav"
 }
 ```
 
-**转换为MiniMax格式**:
+**经过模板处理后的第三方API请求**:
 ```json
 {
   "model": "speech-2.5-hd-preview",
@@ -173,16 +220,16 @@ npx wrangler login
   "voice_setting": {
     "voice_id": "Boyan_new_platform",
     "speed": 1.2,
-    "pitch": 0.1,
-    "vol": 0.8,
+    "pitch": 0,
+    "vol": 1,
     "latex_read": false
   },
   "audio_setting": {
-    "sample_rate": 24000,
+    "sample_rate": 32000,
     "bitrate": 128000,
     "format": "wav"
   },
-  "language_boost": "zh"
+  "language_boost": "auto"
 }
 ```
 
@@ -194,9 +241,10 @@ npx wrangler login
 [vars]
 CORS_ORIGIN = "https://your-frontend-domain.com"
 THIRD_PARTY_TTS_URL = "https://api.minimax.chat/v1/t2a_v2"
+TTS_PARAMETER_MAPPING = """JSON模板配置"""
 ```
 
-这两个变量可以在部署后直接查看，其他敏感信息（如API密钥和访问令牌）使用 Wrangler Secrets 安全存储。
+这些变量可以在部署后直接查看，其他敏感信息（如API密钥和访问令牌）使用 Wrangler Secrets 安全存储。
 
 ## 使用示例
 
@@ -261,15 +309,3 @@ curl -X POST https://your-worker.workers.dev/api/tts \
 └── README.md             # 项目文档
 ```
 
-## 开发命令
-
-```bash
-# 本地开发
-npm run dev
-
-# 部署到生产环境
-npm run deploy
-
-# 运行测试
-./test.sh [worker_url]
-```
